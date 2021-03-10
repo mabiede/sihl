@@ -64,9 +64,88 @@ let intercept sender email =
   else sender email
 ;;
 
-module Smtp : Sihl.Contract.Email.Sig = struct
+module type SmtpConfig = sig
+  val sender : string
+  val username : string
+  val password : string
+  val hostname : string
+  val port : int option
+  val start_tls : bool
+  val ca_path : string option
+  val ca_cert : string option
+  val console : bool option
+end
+
+module MakeSmtp (Config : SmtpConfig) : Sihl.Contract.Email.Sig = struct
   include DevInbox
 
+  let send' (email : Sihl.Contract.Email.t) =
+    let recipients =
+      List.concat
+        [ [ Letters.To email.recipient ]
+        ; List.map (fun address -> Letters.Cc address) email.cc
+        ; List.map (fun address -> Letters.Bcc address) email.bcc
+        ]
+    in
+    let body =
+      match email.html with
+      | Some html -> Letters.Html html
+      | None -> Letters.Plain email.text
+    in
+    let sender = Config.sender in
+    let username = Config.username in
+    let password = Config.password in
+    let hostname = Config.hostname in
+    let port = Config.port in
+    let with_starttls = Config.start_tls in
+    let ca_path = Config.ca_path in
+    let ca_cert = Config.ca_cert in
+    let config =
+      Letters.Config.make ~username ~password ~hostname ~with_starttls
+      |> Letters.Config.set_port port
+      |> fun conf ->
+      match ca_cert, ca_path with
+      | Some path, _ -> Letters.Config.set_ca_cert path conf
+      | None, Some path -> Letters.Config.set_ca_path path conf
+      | None, None -> conf
+    in
+    Letters.build_email
+      ~from:email.sender
+      ~recipients
+      ~subject:email.subject
+      ~body
+    |> function
+    | Ok message -> Letters.send ~config ~sender ~recipients ~message
+    | Error msg -> raise (Sihl.Contract.Email.Exception msg)
+  ;;
+
+  let send email = intercept send' email
+  let bulk_send _ = failwith "Bulk sending not implemented yet"
+
+  let start () =
+    (* Make sure that configuration is valid *)
+    if Sihl.Configuration.is_production ()
+    then Sihl.Configuration.require schema
+    else ();
+    (* if mail is intercepted, don't punish user for not providing SMTP
+       credentials *)
+    if should_intercept () then () else Sihl.Configuration.require schema;
+    Lwt.return ()
+  ;;
+
+  let stop () = Lwt.return ()
+
+  let lifecycle =
+    Sihl.Container.create_lifecycle Sihl.Contract.Email.name ~start ~stop
+  ;;
+
+  let register () =
+    let configuration = Sihl.Configuration.make ~schema () in
+    Sihl.Container.Service.create ~configuration lifecycle
+  ;;
+end
+
+module EnvSmtpConfig = struct
   type config =
     { sender : string
     ; username : string
@@ -118,73 +197,25 @@ module Smtp : Sihl.Contract.Email.Sig = struct
       config
   ;;
 
-  let send' (email : Sihl.Contract.Email.t) =
-    let recipients =
-      List.concat
-        [ [ Letters.To email.recipient ]
-        ; List.map (fun address -> Letters.Cc address) email.cc
-        ; List.map (fun address -> Letters.Bcc address) email.bcc
-        ]
-    in
-    let body =
-      match email.html with
-      | Some html -> Letters.Html html
-      | None -> Letters.Plain email.text
-    in
-    let sender = (Sihl.Configuration.read schema).sender in
-    let username = (Sihl.Configuration.read schema).username in
-    let password = (Sihl.Configuration.read schema).password in
-    let hostname = (Sihl.Configuration.read schema).hostname in
-    let port = (Sihl.Configuration.read schema).port in
-    let with_starttls = (Sihl.Configuration.read schema).start_tls in
-    let ca_path = (Sihl.Configuration.read schema).ca_path in
-    let ca_cert = (Sihl.Configuration.read schema).ca_cert in
-    let config =
-      Letters.Config.make ~username ~password ~hostname ~with_starttls
-      |> Letters.Config.set_port port
-      |> fun conf ->
-      match ca_cert, ca_path with
-      | Some path, _ -> Letters.Config.set_ca_cert path conf
-      | None, Some path -> Letters.Config.set_ca_path path conf
-      | None, None -> conf
-    in
-    Letters.build_email
-      ~from:email.sender
-      ~recipients
-      ~subject:email.subject
-      ~body
-    |> function
-    | Ok message -> Letters.send ~config ~sender ~recipients ~message
-    | Error msg -> raise (Sihl.Contract.Email.Exception msg)
-  ;;
-
-  let send email = intercept send' email
-  let bulk_send _ = failwith "Bulk sending not implemented yet"
-
-  let start () =
-    (* Make sure that configuration is valid *)
-    if Sihl.Configuration.is_production ()
-    then Sihl.Configuration.require schema
-    else ();
-    (* if mail is intercepted, don't punish user for not providing SMTP
-       credentials *)
-    if should_intercept () then () else Sihl.Configuration.require schema;
-    Lwt.return ()
-  ;;
-
-  let stop () = Lwt.return ()
-
-  let lifecycle =
-    Sihl.Container.create_lifecycle Sihl.Contract.Email.name ~start ~stop
-  ;;
-
-  let register () =
-    let configuration = Sihl.Configuration.make ~schema () in
-    Sihl.Container.Service.create ~configuration lifecycle
-  ;;
+  let sender = (Sihl.Configuration.read schema).sender
+  let username = (Sihl.Configuration.read schema).username
+  let password = (Sihl.Configuration.read schema).password
+  let hostname = (Sihl.Configuration.read schema).hostname
+  let port = (Sihl.Configuration.read schema).port
+  let start_tls = (Sihl.Configuration.read schema).start_tls
+  let ca_path = (Sihl.Configuration.read schema).ca_path
+  let ca_cert = (Sihl.Configuration.read schema).ca_cert
+  let console = (Sihl.Configuration.read schema).console
 end
 
-module SendGrid : Sihl.Contract.Email.Sig = struct
+module Smtp = MakeSmtp (EnvSmtpConfig)
+
+module type SendGridConfig = sig
+  val api_key : string
+  val console : bool option
+end
+
+module MakeSendGrid (Config : SendGridConfig) : Sihl.Contract.Email.Sig = struct
   include DevInbox
 
   let body ~recipient ~subject ~sender ~content =
@@ -222,22 +253,10 @@ module SendGrid : Sihl.Contract.Email.Sig = struct
     "https://api.sendgrid.com/v3/mail/send" |> Uri.of_string
   ;;
 
-  type config =
-    { api_key : string
-    ; console : bool option
-    }
-
-  let config api_key console = { api_key; console }
-
-  let schema =
-    let open Conformist in
-    make [ string "SENDGRID_API_KEY"; optional (bool "EMAIL_CONSOLE") ] config
-  ;;
-
   let send' email =
     let open Lwt.Syntax in
     let open Sihl.Contract.Email in
-    let token = (Sihl.Configuration.read schema).api_key in
+    let token = Config.api_key in
     let headers =
       Cohttp.Header.of_list
         [ "authorization", "Bearer " ^ token
@@ -293,6 +312,29 @@ module SendGrid : Sihl.Contract.Email.Sig = struct
     Sihl.Container.Service.create ~configuration lifecycle
   ;;
 end
+
+module EnvSendGridConfig = struct
+  type config =
+    { api_key : string
+    ; console : bool option
+    }
+
+  let config api_key console = { api_key; console }
+
+  let schema =
+    let open Conformist in
+    make
+      [ string "SENDGRID_API_KEY"
+      ; optional (bool ~default:false "EMAIL_CONSOLE")
+      ]
+      config
+  ;;
+
+  let api_key = (Sihl.Configuration.read schema).api_key
+  let console = (Sihl.Configuration.read schema).console
+end
+
+module SendGrid = MakeSendGrid (EnvSendGridConfig)
 
 (* This is useful if you need to answer a request quickly while sending the
    email in the background *)
