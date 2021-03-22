@@ -162,7 +162,15 @@ let table scope csrf (jobs : Sihl.Contract.Queue.instance list) =
 |}]
 ;;
 
-let page ?back body =
+let light = [%html {|
+             .foo {}
+|}]
+
+let dark = [%html {|
+             .bar {}
+|}]
+
+let page ?back ?theme body =
   let body =
     match back with
     | Some back ->
@@ -171,37 +179,72 @@ let page ?back body =
     | None -> body
   in
   let body =
+    match theme with
+    | Some `Light ->
+      let theme = [%html {|<style>|} [ light ] {|</style>|}] in
+      List.concat [ body; [ theme ] ]
+    | Some `Dark ->
+      let theme = [%html {|<style>|} [ dark ] {|</style>|}] in
+      List.concat [ body; [ theme ] ]
+    | Some (`Custom _) -> body
+    | None ->
+      let theme = [%html {|<style>|} [ light ] {|</style>|}] in
+      List.concat [ body; [ theme ] ]
+  in
+  let body =
     match Sihl.Configuration.read_string "HTMX_SCRIPT_URL" with
     | Some htmx ->
       let htmx_script = [%html {|<script src="|} htmx {|"></script>|}] in
       List.concat [ body; [ htmx_script ] ]
     | None -> body
   in
-  [%html
-    {|
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8"/>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <link href="/assets/styles.css" rel="stylesheet">
-    <title>Hello world!</title>
-  </head>
-    <body>|}
-      body
+  match theme with
+  | Some (`Custom url) ->
+    [%html
       {|
-     </body>
-</html>
-|}]
+       <!doctype html>
+       <html lang="en">
+         <head>
+           <meta charset="UTF-8"/>
+           <meta name="viewport" content="width=device-width, initial-scale=1">
+           <link href="|}
+        url
+        {|" rel="stylesheet">
+           <link href="/assets/styles.css" rel="stylesheet">
+           <title>Hello world!</title>
+         </head>
+           <body>|}
+        body
+        {|
+           </body>
+       </html>
+      |}]
+  | _ ->
+    [%html
+      {|
+       <!doctype html>
+       <html lang="en">
+         <head>
+           <meta charset="UTF-8"/>
+           <meta name="viewport" content="width=device-width, initial-scale=1">
+           <link href="/assets/styles.css" rel="stylesheet">
+           <title>Hello world!</title>
+         </head>
+           <body>|}
+        body
+        {|
+           </body>
+       </html>
+      |}]
 ;;
 
-let index ?back scope find_jobs =
+let index ?back ?theme scope find_jobs =
   let open Lwt.Syntax in
   Sihl.Web.Http.get "" (fun req ->
       let csrf = Sihl.Web.Csrf.find req |> Option.get in
       let* jobs = find_jobs () in
       Lwt.return
-      @@ Sihl.Web.Response.of_html (page ?back [ table scope csrf jobs ]))
+      @@ Sihl.Web.Response.of_html (page ?back ?theme [ table scope csrf jobs ]))
 ;;
 
 let html_index scope find_jobs =
@@ -248,12 +291,13 @@ let router
     requeue_job
     ?(middlewares = [])
     ?back
+    ?theme
     scope
   =
   Sihl.Web.Http.router
     ~middlewares:(List.concat [ core_middlewares; middlewares ])
     ~scope
-    [ index ?back scope search_jobs
+    [ index ?back ?theme scope search_jobs
     ; html_index scope search_jobs
     ; cancel scope find_job cancel_job
     ; requeue scope find_job requeue_job

@@ -123,6 +123,7 @@ module type Sig = sig
   val router
     :  ?middlewares:Rock.Middleware.t list
     -> ?back:string
+    -> ?theme:[ `Custom of string | `Light | `Dark ]
     -> string
     -> Contract_http.router
 
