@@ -4,7 +4,7 @@ let log_src = Logs.Src.create ("sihl.service." ^ Sihl.Contract.Queue.name)
 
 module Logs = (val Logs.src_log log_src : Logs.LOG)
 
-let create_instance ?(ctx = []) input delay now (job : 'a job) =
+let create_instance ?ctx input delay now (job : 'a job) =
   let input = job.encode input in
   let name = job.name in
   let next_run_at =
@@ -114,7 +114,7 @@ module Make (Repo : Repo.Sig) : Sihl.Contract.Queue.Sig = struct
     let job_instance_id = job_instance.id in
     let%lwt result =
       Lwt.catch
-        (fun () -> job.handle ~ctx:job_instance.ctx input)
+        (fun () -> job.handle ?ctx:job_instance.ctx input)
         (fun exn ->
           let exn_string = Printexc.to_string exn in
           Logs.err (fun m ->

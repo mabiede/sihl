@@ -20,7 +20,7 @@ let create_instance input delay now (job : 'a Sihl_queue.job) =
   ; last_error = None
   ; last_error_at = None
   ; tag = None
-  ; ctx = []
+  ; ctx = None
   }
 ;;
 

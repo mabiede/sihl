@@ -18,7 +18,7 @@ type instance =
   ; last_error : string option
   ; last_error_at : Ptime.t option
   ; tag : string option
-  ; ctx : (string * string) list
+  ; ctx : (string * string) list option
   }
 [@@deriving show]
 

@@ -44,9 +44,8 @@ let job =
           , ( m.tries
             , ( m.next_run_at
               , ( m.max_tries
-                , ( m.status
-                  , (m.last_error, (m.last_error_at, (m.tag, Some m.ctx))) ) )
-              ) ) ) ) )
+                , (m.status, (m.last_error, (m.last_error_at, (m.tag, m.ctx))))
+                ) ) ) ) ) )
   in
   let decode
     ( id
@@ -68,7 +67,7 @@ let job =
       ; last_error
       ; last_error_at
       ; tag
-      ; ctx = Option.value ~default:[] ctx
+      ; ctx
       }
   in
   Caqti_type.(
@@ -419,7 +418,7 @@ module MakeMariaDb (MigrationService : Sihl.Contract.Migration.Sig) = struct
       Sihl.Database.Migration.create_step
         ~label:"add ctx column"
         {sql|
-      ALTER TABLE queue_jobs 
+      ALTER TABLE queue_jobs
        ADD COLUMN ctx TEXT NULL
       |sql}
     ;;
@@ -732,7 +731,7 @@ module MakePostgreSql (MigrationService : Sihl.Contract.Migration.Sig) = struct
       Sihl.Database.Migration.create_step
         ~label:"add ctx column"
         {sql|
-      ALTER TABLE queue_jobs 
+      ALTER TABLE queue_jobs
        ADD COLUMN ctx TEXT NULL
       |sql}
     ;;
